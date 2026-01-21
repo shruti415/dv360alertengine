@@ -1,1 +1,9 @@
 .env
+
+# 1. The Virtual Environment (Like node_modules)
+venv/
+env/
+
+# 2. Python Cache files (Like build artifacts)
+__pycache__/
+*.pyc
