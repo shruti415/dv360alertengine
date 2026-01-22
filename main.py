@@ -5,7 +5,9 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
 from email_body import generate_email_body
-from pacing_alert import pre_process_data, calculate_deviation
+from pacing_alert import calculate_pacing_alerts
+from impression_alert import generate_impression_alert
+from kpi_alert import detect_kpi_anomalies
 
 load_dotenv()       
 
@@ -13,10 +15,12 @@ SENDER = os.getenv('EMAIL_USER')
 PASSWORD = os.getenv('EMAIL_PASSWORD')
 RECEIVER = os.getenv('RECEIVER_EMAIL')
 
-df = pre_process_data('Data.csv')
-df[['Pacing_Status', 'Deviation_%', 'Expected_Spend']] = df.apply(calculate_deviation, axis=1)
-
+pacing_df = calculate_pacing_alerts(pd.read_csv('Data.csv'))
+impression_df = generate_impression_alert('Data.csv')
+kpi_df = detect_kpi_anomalies(pd.read_csv('Data.csv'))
 # print(df[['IO_Pacing', 'Planned_Budget', 'Spends', 'Expected_Spend', 'Deviation_%', 'Pacing_Status']])
+# print(pacing_df.iloc[0])
+# print(impression_df.iloc[0])
 
 def send_alert():
     if not SENDER or not PASSWORD:
@@ -41,5 +45,5 @@ def send_alert():
     except Exception as e:
         print(f"Error: {e}")
 
-if __name__ == "__main__":
-    send_alert()
+# if __name__ == "__main__":
+#     send_alert()

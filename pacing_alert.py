@@ -1,82 +1,84 @@
 import pandas as pd
 import numpy as np
-from datetime import datetime
 
-def pre_process_data(file_path):
-    df = pd.read_csv(file_path)
-
-    # 2. Pre-processing: Convert columns to DateTime
+def calculate_pacing_alerts(df):
+    # 1. Pre-processing: Date Conversion
     date_cols = ['Date', 'IO_Start_Date', 'IO_End_Date']
     for col in date_cols:
         df[col] = pd.to_datetime(df[col])
+
+    # 2. Sort to ensure Cumulative Calculation is correct
+    df = df.sort_values(by=['Insertion_Order_Name', 'Date'])
+
+    # 3. Calculate Key Time Metrics
+    # Add 1 to include the current day
+    df['Total_Days'] = (df['IO_End_Date'] - df['IO_Start_Date']).dt.days + 1
+    df['Days_Elapsed'] = (df['Date'] - df['IO_Start_Date']).dt.days + 1
+    
+    # Cap Days_Elapsed to ensure we don't calculate past the flight end
+    df['Days_Elapsed'] = df['Days_Elapsed'].clip(lower=1, upper=df['Total_Days'])
+
+    # 4. Calculate Cumulative Spend (The "Apples-to-Apples" Fix)
+    # We must compare Cumulative Target vs Cumulative Spend
+    df['Cumulative_Spend'] = df.groupby('Insertion_Order_Name')['Spends'].cumsum()
+
+    # 5. Calculate "Even" Linear Target
+    # (Total Budget / Total Days) * Days Elapsed
+    even_target = (df['Planned_Budget'] / df['Total_Days']) * df['Days_Elapsed']
+
+    # 6. Apply Pacing Logic (Vectorized)
+    # Ahead = 120% of Even Pace (capped at Planned Budget)
+    # ASAP = 100% of Budget immediately
+    
+    pacing_type = df['IO_Pacing'].str.lower()
+    
+    conditions = [
+        pacing_type.str.contains('ahead'),
+        pacing_type.str.contains('asap')
+    ]
+    
+    choices = [
+        (even_target * 1.2).clip(upper=df['Planned_Budget']), # Ahead Logic
+        df['Planned_Budget']                                  # ASAP Logic
+    ]
+    
+    # Default to 'even_target' if neither condition is met
+    df['Ideal_Spend_to_Date'] = np.select(conditions, choices, default=even_target)
+
+    # 7. Calculate Deviation
+    # Formula: (Actual - Expected) / Expected
+    # We replace 0 with NaN to avoid ZeroDivisionError
+    safe_ideal = df['Ideal_Spend_to_Date'].replace(0, np.nan)
+    df['Deviation_%'] = ((df['Cumulative_Spend'] - safe_ideal) / safe_ideal) * 100
+    df['Deviation_%'] = df['Deviation_%'].fillna(0).round(2)
+
+    # 8. Generate Alert Status (Vectorized)
+    # Deviation > 20% = Overspending
+    # Deviation < -20% = Underspending
+    # ASAP is special: You can't really "overspend" unless you exceed total budget
+    
+    conditions_status = [
+        (pacing_type.str.contains('asap')) & (df['Deviation_%'] < -20), # ASAP Underspend
+        (df['Deviation_%'] > 20),  # General Overspend
+        (df['Deviation_%'] < -20)  # General Underspend
+    ]
+    
+    choices_status = [
+        "Underspending (ASAP)",
+        "Overspending",
+        "Underspending"
+    ]
+    
+    df['Pacing_Status'] = np.select(conditions_status, choices_status, default="On Track")
+    
+    # Optional: Add the specific % to the status string for readability
+    # (Note: This step is slower, do only if necessary for export)
+    mask_alert = df['Pacing_Status'] != "On Track"
+    df.loc[mask_alert, 'Pacing_Status'] = df.loc[mask_alert, 'Pacing_Status'] + " by " + df['Deviation_%'].abs().astype(str) + "%"
+
     return df
 
-def calculate_deviation(row):
-    # We add 1 to include the current day/end day in the duration
-    total_flight_days = (row['IO_End_Date'] - row['IO_Start_Date']).days + 1
-    days_elapsed = (row['Date'] - row['IO_Start_Date']).days + 1
-    
-    # Safety Check: Prevent division by zero
-    if total_flight_days <= 0: return pd.Series(["Error", 0.0])
-    
-    # Calculate % Time Elapsed (Capped at 1.0/100%)
-    time_progress = min(max(days_elapsed / total_flight_days, 0.0), 1.0)
-    
-    # B. Calculate Expected Spend based on Pacing Type
-    budget = row['Planned_Budget']
-    pacing_type = row['IO_Pacing'].lower()
-    
-    expected_spend = 0.0
-    
-    if 'even' in pacing_type:
-        # Linear: If 10% time passed, expect 10% spend
-        expected_spend = budget * time_progress
-        
-    elif 'ahead' in pacing_type:
-        # Front-loaded: Inverted Parabola logic (y = x(2-x))
-        # Spending is aggressive early, then tapers
-        curve_factor = time_progress * (2 - time_progress)
-        expected_spend = budget * curve_factor
-        
-    elif 'asap' in pacing_type:
-        # ASAP expects 100% of budget to be spent immediately
-        # (Or as much as possible). We compare against the full budget.
-        expected_spend = budget
-        
-    else:
-        # Fallback for unknown types
-        expected_spend = budget * time_progress
-
-    # C. Calculate Deviation %
-    # Formula: (Actual - Expected) / Expected
-    if expected_spend == 0:
-        deviation = 0.0
-    else:
-        deviation = ((row['Spends'] - expected_spend) / expected_spend) * 100
-
-    # D. Determine Flag (The +/- 20% Rule)
-    status = "On Track"
-    
-    if 'asap' in pacing_type:
-        # ASAP Logic: You generally can't be "Overpaced" (faster is better).
-        # You are only "Underpaced" if you have budget left.
-        # However, for a strict +/- 20 check:
-        if deviation < -20: 
-            status = f"Underpaced by {round(abs(deviation), 2)}%"
-        # We ignore positive deviation for ASAP as it's usually impossible 
-        # (unless you spent more than the total IO budget)
-    else:
-        # Standard Logic for Even/Ahead
-        if deviation > 20:
-            status = f"Overpaced by {round(abs(deviation), 2)}%"
-        elif deviation < -20:
-            status = f"Underpaced by {round(abs(deviation), 2)}%"
-            
-    return pd.Series([status, round(deviation, 2), round(expected_spend, 2)])
-
-# Apply the function
-# df = pre_process_data('Data.csv')
-# df[['Pacing_Status', 'Deviation_%', 'Expected_Spend']] = df.apply(calculate_deviation, axis=1)
-
-# # # Display the result
-# print(df[['IO_Pacing', 'Planned_Budget', 'Spends', 'Expected_Spend', 'Deviation_%', 'Pacing_Status']])
+# Usage
+# df = pd.read_csv('Data.csv')
+# df_result = calculate_pacing_alerts(df)
+# print(df_result[['Date', 'IO_Pacing_Rate', 'Cumulative_Spend', 'Ideal_Spend_to_Date', 'Deviation_%', 'Pacing_Status']])
