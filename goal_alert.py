@@ -101,7 +101,7 @@ def calculate_li_daily_metrics(df, target_date_str):
     
     return agg_df[final_cols]
 
-# --- Example Usage ---
-df = pd.read_csv('Placement_Data.csv')
-results = calculate_li_daily_metrics(df, target_date_str='2025/03/25')
-print(results.to_string())
+## --- Example Usage ---
+# df = pd.read_csv('Placement_Data.csv')
+# results = calculate_li_daily_metrics(df, target_date_str='2025/03/25')
+# print(results.to_string())

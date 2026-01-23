@@ -68,6 +68,6 @@ def get_daily_impression_deviation(df, target_date_str, entity_col, date_col='Da
 # li_report = get_daily_impression_deviation(
 #     df=li_df, 
 #     target_date_str='4/2/2025', 
-    entity_col='Line_Item_Name'
-)
-print(li_report[["Today's Impressions", "Yesterday's Impressions", "Deviation %"]].to_string())
+#     entity_col='Line_Item_Name'
+# )
+# print(li_report[["Today's Impressions", "Yesterday's Impressions", "Deviation %"]].to_string())
