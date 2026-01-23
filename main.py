@@ -10,6 +10,7 @@ from impression_alert import generate_impression_alert
 from kpi_alert import detect_kpi_anomalies
 from goal_alert import analyze_kpi_deviations
 from pg_lag_alert import calculate_pg_impression_lag
+from gemini_api import send_prompt_and_store, generate_prompt_from_dataframe
 
 load_dotenv()       
 
