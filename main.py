@@ -5,12 +5,6 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
 from email_body import generate_email_body
-from pacing_alert import calculate_pacing_alerts
-from impression_alert import generate_impression_alert
-from kpi_alert import detect_kpi_anomalies
-from goal_alert import analyze_kpi_deviations
-from pg_lag_alert import calculate_pg_impression_lag
-from gemini_api import send_prompt_and_store, generate_prompt_from_dataframe
 
 load_dotenv()       
 
@@ -18,11 +12,11 @@ SENDER = os.getenv('EMAIL_USER')
 PASSWORD = os.getenv('EMAIL_PASSWORD')
 RECEIVER = os.getenv('RECEIVER_EMAIL')
 
-pacing_df = calculate_pacing_alerts(pd.read_csv('Data.csv'))
-impression_df = generate_impression_alert('Data.csv')
-kpi_df = detect_kpi_anomalies(pd.read_csv('Data.csv'))
-goal_df = analyze_kpi_deviations(pd.read_csv('Data.csv'))
-pg_df = calculate_pg_impression_lag(pd.read_csv('Data.csv'))
+# pacing_df = calculate_pacing_alerts(pd.read_csv('Data.csv'))
+# impression_df = generate_impression_alert('Data.csv')
+# kpi_df = detect_kpi_anomalies(pd.read_csv('Data.csv'))
+# goal_df = analyze_kpi_deviations(pd.read_csv('Data.csv'))
+# pg_df = calculate_pg_impression_lag(pd.read_csv('Data.csv'))
 # print(df[['IO_Pacing', 'Planned_Budget', 'Spends', 'Expected_Spend', 'Deviation_%', 'Pacing_Status']])
 # print(pacing_df.iloc[0])
 # print(impression_df.iloc[0])
