@@ -1,71 +1,67 @@
 import pandas as pd
 import numpy as np
 
-def get_daily_impression_deviation(df, target_date_str, entity_col, date_col='Date', imp_col='Impressions'):
+def check_daily_impression_deviation(df: pd.DataFrame, target_date: str):
     """
-    Returns deviation report for a specific date by comparing it strictly with (date - 1).
-    """
-    # 1. Parse Dates
-    target_date = pd.to_datetime(target_date_str)
-    previous_date = target_date - pd.Timedelta(days=1)
+    Calculates daily impression goals and flags deviations > 20% for a specific date.
     
-    # Ensure dataframe dates are datetime objects
-    df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
+    Args:
+        df (pd.DataFrame): The raw dataframe containing campaign data.
+        target_date (str): The date to analyze (format flexible, e.g., '12/5/2025' or '2025-12-05').
+        
+    Returns:
+        pd.DataFrame: A filtered dataframe containing the calculations and status for the target date.
+    """
+    # 1. Create a copy to avoid SettingWithCopy warnings on the original df
+    #    and ensure Date column is in datetime format for accurate comparison
+    df_processed = df.copy()
+    df_processed['Date'] = pd.to_datetime(df_processed['Date'])
+    target_date_dt = pd.to_datetime(target_date)
+    
+    # 2. OPTIMIZATION: Filter by date first to reduce computation on large datasets
+    daily_data = df_processed[df_processed['Date'] == target_date_dt].copy()
+    
+    if daily_data.empty:
+        print(f"No data found for date: {target_date}")
+        return daily_data
 
-    # 2. Extract Data for Target Date (Today) and Previous Date (Yesterday)
-    today_data = df[df[date_col] == target_date].copy()
-    yesterday_data = df[df[date_col] == previous_date].copy()
+    # 3. Ensure calculation columns are numeric and handle dates
+    daily_data['IO_Start_Date'] = pd.to_datetime(daily_data['IO_Start_Date'])
+    daily_data['IO_End_Date'] = pd.to_datetime(daily_data['IO_End_Date'])
+    
+    # 4. Calculate Flight Duration (Inclusive of start and end date)
+    #    Adding 1 day because 12/5 to 12/5 is usually considered 1 day of activity
+    daily_data['Total_Flight_Duration'] = (daily_data['IO_End_Date'] - daily_data['IO_Start_Date']).dt.days + 1
+    
+    # 5. Calculate Daily Impression Goal
+    #    Formula: impression budget / (IO goal value * total flight duration)
+    #    Using .div() to handle potential division by zero gracefully if needed
+    denominator = daily_data['IO_Goal_Value'] * daily_data['Total_Flight_Duration']
+    daily_data['Daily_Impression_Goal'] = daily_data['IO_Impr_Budget'] / denominator
+    
+    # 6. Calculate % Deviation
+    #    Formula: |(Actual - Goal) / Goal| * 100
+    daily_data['Deviation_Pct'] = (
+        abs(daily_data['Impressions'] - daily_data['Daily_Impression_Goal']) 
+        / daily_data['Daily_Impression_Goal']
+    ) * 100
+    
+    # 7. Set Status ('Alert' if > 20%, else 'OK')
+    daily_data['Status'] = np.where(daily_data['Deviation_Pct'] > 20, 'Alert', 'OK')
+    
+    # Optional: Formatting for readability (rounding)
+    daily_data['Daily_Impression_Goal'] = daily_data['Daily_Impression_Goal'].round(0)
+    daily_data['Deviation_Pct'] = daily_data['Deviation_Pct'].round(2)
 
-    # 3. Handle case where no data exists for target date
-    if today_data.empty:
-        return pd.DataFrame(columns=[entity_col, "Date", "Today's Impressions", "Yesterday's Impressions", "Deviation %"])
+    return daily_data
 
-    # 4. Merge Data (Left Join ensures we keep all active entities from Today)
-    # Suffixes help distinguish columns automatically: _today, _yesterday
-    merged_df = pd.merge(
-        today_data[[entity_col, imp_col, date_col]], 
-        yesterday_data[[entity_col, imp_col]], 
-        on=entity_col, 
-        how='left', 
-        suffixes=('', '_yesterday')
-    )
+# --- Example Usage ---
 
-    # 5. Clean up columns
-    merged_df = merged_df.rename(columns={
-        imp_col: "Today's Impressions",
-        f'{imp_col}_yesterday': "Yesterday's Impressions"
-    })
+df = pd.read_csv('Impression_Data.csv')
 
-    # Fill NaNs for yesterday with 0 (implies it's a new entity or paused yesterday)
-    merged_df["Yesterday's Impressions"] = merged_df["Yesterday's Impressions"].fillna(0)
+# 2. Running the function for a specific date
+result_df = check_daily_impression_deviation(df, '12/18/2025')
 
-    # 6. Calculate Deviation %
-    merged_df['Deviation %'] = np.where(
-        merged_df["Yesterday's Impressions"] > 0,
-        ((merged_df["Today's Impressions"] - merged_df["Yesterday's Impressions"]) / merged_df["Yesterday's Impressions"]) * 100,
-        0.0
-    )
-
-    return merged_df
-
-# # --- Execution Example ---
-# # Load Data
-# io_df = pd.read_csv('Impression_Data.csv')
-# li_df = pd.read_csv('LI_Data.csv')
-# # 1. Calculate for IO Level for specific date
-# print("--- IO Report for 4/1/2025 ---")
-# io_report = get_daily_impression_deviation(
-#     df=io_df, 
-#     target_date_str='12/23/2025', 
-#     entity_col='Campaign'
-# )
-# print(io_report[["Today's Impressions", "Yesterday's Impressions", "Deviation %"]].to_string())
-
-# # 2. Calculate for LI Level for specific date (Example with 4/2/2025 to see deviation)
-# print("\n--- LI Report for 4/2/2025 ---")
-# li_report = get_daily_impression_deviation(
-#     df=li_df, 
-#     target_date_str='4/2/2025', 
-#     entity_col='Line_Item_Name'
-# )
-# print(li_report[["Today's Impressions", "Yesterday's Impressions", "Deviation %"]].to_string())
+# 3. Displaying relevant columns
+cols_to_show = ['Date', 'Impressions', 'Daily_Impression_Goal', 'Deviation_Pct', 'Status']
+print(result_df[cols_to_show].to_string(index=False))

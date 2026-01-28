@@ -1,9 +1,9 @@
 import pandas as pd
 import numpy as np
 
-# Load Data
-io_df = pd.read_csv('Data.csv')
-li_df = pd.read_csv('LI_Data.csv')
+# # Load Data
+# io_df = pd.read_csv('Data.csv')
+# li_df = pd.read_csv('LI_Data.csv')
 
 # --- 1. IO Level Function ---
 def calculate_io_metrics(df, target_date_str): # <--- CHANGED: Added target_date_str
@@ -152,17 +152,17 @@ def calculate_li_metrics(df, target_date_str): # <--- CHANGED: Added target_date
 # <--- CHANGED: Passing the specific date parameter
 # print("Processing IO Metrics for 4/1/2025...")
 # # Note: 4/1 is the start, so Yesterday Spend should be 0 and DoD 0%
-# io_df_processed = calculate_io_metrics(io_df.copy(), target_date_str='4/2/2025')
+#io_df_processed = calculate_io_metrics(io_df.copy(), target_date_str='4/2/2025')
 
 # print("Processing LI Metrics for 4/2/2025...")
 # # Note: 4/2 will compare against 4/1
 # li_df_processed = calculate_li_metrics(li_df.copy(), target_date_str='4/2/2025')
 
 # # --- Display Results ---
-# cols_to_show = ['Date', 'Today Spend', 'Yesterday Spend', 'DoD Deviation %', 'Ideal Flight-to-Date Pacing', 'Actual Flight to Date Spend', 'Deviation %']
+#cols_to_show = ['Date', 'Today Spend', 'Yesterday Spend', 'DoD Deviation %', 'Ideal Flight-to-Date Pacing', 'Actual Flight to Date Spend', 'Deviation %']
 
 # print("\n--- IO Results (4/1/2025) ---")
-# print(io_df_processed[cols_to_show].to_string())
+#print(io_df_processed[cols_to_show].to_string())
 
 # print("\n--- LI Results (4/2/2025) ---")
 # print(li_df_processed[cols_to_show].to_string())

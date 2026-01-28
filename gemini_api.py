@@ -1,62 +1,49 @@
-import google.generativeai as genai
 import os
-from datetime import datetime
 import json
+from datetime import datetime
+from google import genai
+from google.genai import types
 
-# Configure Gemini API
-def configure_gemini():
-    """Configure Gemini API with API key from environment"""
+# Initialize the client globally or inside functions
+# The new SDK doesn't use a global 'configure' state like the old one
+def get_gemini_client():
+    """Initialize Gemini Client with API key from environment"""
     api_key = os.getenv('GEMINI_API_KEY')
     if not api_key:
         raise ValueError("GEMINI_API_KEY not found in environment variables")
-    genai.configure(api_key=api_key)
+    return genai.Client(api_key=api_key)
 
 
-def send_prompt_and_store(prompt: str, output_file: str = None) -> dict:
+def send_prompt_and_store(prompt_parts: list | str, output_file: str = None):
     """
-    Send prompt to Gemini API and store the response
+    Send prompt to Gemini API and store the response.
     
     Args:
-        prompt (str): The prompt to send to Gemini
+        prompt_parts (list | str): The prompt content (string or list of strings/images)
         output_file (str): Path to store the response. If None, uses default naming
         
     Returns:
-        dict: Contains the response and metadata
+        The response object or error dict
     """
     try:
-        configure_gemini()
+        client = get_gemini_client()
         
-        # Initialize the Gemini model
-        model = genai.GenerativeModel('gemini-pro')
+        # Send prompt and get response using the new V1 SDK syntax
+        # We use 'gemini-2.0-flash' as it is the current standard model
+        response = client.models.generate_content(
+            model='gemini-2.0-flash',
+            contents=prompt_parts,
+            config=types.GenerateContentConfig(
+                temperature=0.2, # Lower temperature for analytical tasks
+            )
+        )
         
-        # Send prompt and get response
-        response = model.generate_content(prompt)
-        
-        # Prepare response data
-        response_data = {
-            'timestamp': datetime.now().isoformat(),
-            'prompt': prompt,
-            'response': response.text,
-            'status': 'success'
-        }
-        
-        # Store response to file if no specific output file provided
-        if output_file is None:
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            output_file = f'gemini_response_{timestamp}.json'
-        
-        # Save response to JSON file
-        with open(output_file, 'w') as f:
-            json.dump(response_data, f, indent=2)
-        
-        print(f"Response saved to {output_file}")
-        
-        return response_data
+        return response
         
     except Exception as e:
         error_response = {
             'timestamp': datetime.now().isoformat(),
-            'prompt': prompt,
+            'prompt': str(prompt_parts)[:200] + "...", # Truncate for log readability
             'error': str(e),
             'status': 'failed'
         }
@@ -73,71 +60,34 @@ def send_prompt_and_store(prompt: str, output_file: str = None) -> dict:
         return error_response
 
 
-def generate_prompt_from_dataframe(df, analysis_type: str = "general") -> str:
+def generate_prompt_from_dataframe(dfs_as_strings):
     """
-    Generate a prompt from a dataframe for Gemini API
+    Constructs a prompt for Gemini to analyze DV360 anomaly datasets.
     
     Args:
-        df: Pandas DataFrame
-        analysis_type (str): Type of analysis (general, summary, insights, etc.)
+        dfs_as_strings (list of str): List of CSV strings representing the anomaly dataframes.
         
     Returns:
-        str: Generated prompt
+        list of str: A list containing the instructions followed by the datasets.
     """
-    # Get dataframe info
-    shape = df.shape
-    columns = df.columns.tolist()
-    dtypes = df.dtypes.to_dict()
     
-    # Get sample data
-    sample_data = df.head(3).to_string()
+    # 1. Define the Role and specific Analysis Instructions
+    system_instruction = """
+    **Role:** You are an expert DV360 (Display & Video 360) Campaign Manager and Data Analyst.
     
-    # Create prompt based on analysis type
-    if analysis_type == "summary":
-        prompt = f"""
-Analyze the following data and provide a concise summary:
+    **Context:** I am providing you with multiple datasets containing "anomalies" detected today in recent campaigns. 
+    Each dataset represents a different slice of data where performance deviated from the normal
+    **Your Task:**
+    Analyze these datasets and provide a strategic report for the client. For each dataset provided:
+    1. **Diagnose Root Causes:** Hypothesize *why* this might be happening in strictly 1-2 sentence(e.g., low inventory quality, competitive bidding war, creative fatigue, technical exclusion issues).
+    2. **Actionable Suggestions:** Provide 2-3 specific, tactical steps I can take in DV360 to fix this. Use standard DV360 terminology (e.g., "Apply negative targeting," "Adjust bid multipliers," "Check creative audit status," "Switch to fixed bidding").
 
-Dataset Shape: {shape[0]} rows, {shape[1]} columns
-Columns: {', '.join(columns)}
-Data Types: {dtypes}
+    **Format:**
+    Please structure your response clearly with headings for each dataset. Bullet points are preferred for the suggestions.
+    """
 
-Sample Data:
-{sample_data}
-
-Please provide:
-1. Brief overview of the dataset
-2. Key statistics
-3. Notable patterns or anomalies
-"""
+    # 2. Combine instructions with the data
+    # We put the instruction first, so the model knows what to do with the data that follows.
+    full_prompt_payload = [system_instruction] + dfs_as_strings
     
-    elif analysis_type == "insights":
-        prompt = f"""
-Analyze the following data and provide actionable insights:
-
-Dataset Shape: {shape[0]} rows, {shape[1]} columns
-Columns: {', '.join(columns)}
-
-Sample Data:
-{sample_data}
-
-Please provide:
-1. Top 3 key insights
-2. Potential issues or concerns
-3. Recommendations for action
-"""
-    
-    else:  # general
-        prompt = f"""
-Analyze the following dataset:
-
-Dataset Shape: {shape[0]} rows, {shape[1]} columns
-Columns: {', '.join(columns)}
-Data Types: {dtypes}
-
-Sample Data:
-{sample_data}
-
-Provide your analysis:
-"""
-    
-    return prompt
+    return full_prompt_payload

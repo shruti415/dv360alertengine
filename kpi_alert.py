@@ -108,7 +108,7 @@ def analyze_cpm_performance(df, analysis_date_str):
     # formatting Output for readability
     # ---------------------------------------------------------
     output_columns = [
-        'Date', 'Daily_Achieved_CPM', 
+        'Date','Insertion_Order_Name' ,'Daily_Achieved_CPM', 
         'DoD_CPM_Change_Pct', 'FTD_Goal_CPM', 'FTD_Achieved_CPM', 'Status'
     ]
     
