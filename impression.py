@@ -1,10 +1,6 @@
 import pandas as pd
 import numpy as np
 
-# Load Data
-io_df = pd.read_csv('Data.csv')
-li_df = pd.read_csv('LI_Data.csv')
-
 def get_daily_impression_deviation(df, target_date_str, entity_col, date_col='Date', imp_col='Impressions'):
     """
     Returns deviation report for a specific date by comparing it strictly with (date - 1).
@@ -52,14 +48,16 @@ def get_daily_impression_deviation(df, target_date_str, entity_col, date_col='Da
 
     return merged_df
 
-# --- Execution Example ---
-
-# 1. Calculate for IO Level for specific date
+# # --- Execution Example ---
+# # Load Data
+# io_df = pd.read_csv('Impression_Data.csv')
+# li_df = pd.read_csv('LI_Data.csv')
+# # 1. Calculate for IO Level for specific date
 # print("--- IO Report for 4/1/2025 ---")
 # io_report = get_daily_impression_deviation(
 #     df=io_df, 
-#     target_date_str='4/2/2025', 
-#     entity_col='Insertion_Order_Name'
+#     target_date_str='12/23/2025', 
+#     entity_col='Campaign'
 # )
 # print(io_report[["Today's Impressions", "Yesterday's Impressions", "Deviation %"]].to_string())
 
