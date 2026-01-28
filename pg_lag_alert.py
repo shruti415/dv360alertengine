@@ -1,90 +1,166 @@
 import pandas as pd
 import numpy as np
 
-def calculate_pg_impression_lag(df):
+# --- 1. IO Level PG Lag Check ---
+def calculate_io_pg_lag(df, target_date_str, lag_threshold=-20.0):
     """
-    Calculates Programmatic Guaranteed (PG) Impression Lag.
-    Derives Total Impression Goal from Budget & CPM if not explicitly present.
+    Calculates Impression Lag for IOs on a specific date.
+    Derives Total Impression Goal from (Budget / CPM).
+    Alerts if Lag is worse than threshold (e.g., -5%).
     """
-    # 1. Preprocessing
     df = df.copy()
-    date_cols = ['Date', 'IO_Start_Date', 'IO_End_Date']
-    for col in date_cols:
-        df[col] = pd.to_datetime(df[col])
-        
-    num_cols = ['Planned_Budget', 'Insertion_Order_Goal_Value(KPI)', 'Impressions']
-    for col in num_cols:
-        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+    
+    # 1. Date Parsing & Filtering
+    target_date = pd.to_datetime(target_date_str)
+    df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+    
+    # Filter for data "Uptill" target date for cumulative calculations
+    # We need the full history to sum impressions, but only the specific IO settings
+    history_df = df[df['Date'] <= target_date].copy()
+    
+    if history_df.empty:
+        return pd.DataFrame()
 
-    # Sort for Cumulative Sum
-    df = df.sort_values(by=['Insertion_Order_Name', 'Date'])
+    # 2. Get IO Static Details (Budget, Dates, Goal)
+    # We take the latest settings for each IO (assuming rows might change)
+    io_meta = history_df.sort_values('Date').groupby('Insertion_Order_Name').tail(1)
+    io_meta = io_meta[[
+        'Insertion_Order_Name', 'Planned_Budget', 
+        'Insertion_Order_Goal_Value(KPI)', 'IO_Start_Date', 'IO_End_Date'
+    ]].copy()
 
-    # 2. Derive Total Impression Goal (Budget / CPM * 1000)
-    # Note: If your dataset has a specific 'Impression Goal' column, use that instead.
-    # Here we infer it from the planned budget and the target CPM.
-    df['Total_Impression_Goal'] = (df['Planned_Budget'] / df['Insertion_Order_Goal_Value(KPI)']) * 1000
-    
-    # Handle cases where Goal Value is 0 to avoid infinity
-    df['Total_Impression_Goal'] = df['Total_Impression_Goal'].replace([np.inf, -np.inf], 0).fillna(0)
+    # Clean numeric columns
+    io_meta['Planned_Budget'] = pd.to_numeric(io_meta['Planned_Budget'], errors='coerce').fillna(0)
+    io_meta['Insertion_Order_Goal_Value(KPI)'] = pd.to_numeric(io_meta['Insertion_Order_Goal_Value(KPI)'], errors='coerce').fillna(1) # avoid div/0
+    io_meta['IO_Start_Date'] = pd.to_datetime(io_meta['IO_Start_Date'])
+    io_meta['IO_End_Date'] = pd.to_datetime(io_meta['IO_End_Date'])
 
-    # 3. Calculate Cumulative Actual Impressions
-    df['Cumulative_Impressions'] = df.groupby('Insertion_Order_Name')['Impressions'].cumsum()
+    # 3. Derive Total Impression Goal (The PG Target)
+    # Formula: (Budget / CPM) * 1000
+    io_meta['Derived_Impression_Goal'] = (io_meta['Planned_Budget'] / io_meta['Insertion_Order_Goal_Value(KPI)']) * 1000
+    io_meta['Derived_Impression_Goal'] = io_meta['Derived_Impression_Goal'].round(0)
 
-    # 4. Calculate Expected Impressions (Flight-to-Date)
-    # Time Progress
-    df['Days_Elapsed'] = (df['Date'] - df['IO_Start_Date']).dt.days + 1
-    df['Total_Days'] = (df['IO_End_Date'] - df['IO_Start_Date']).dt.days + 1
+    # 4. Calculate Flight Metrics
+    io_meta['Total_Flight_Days'] = (io_meta['IO_End_Date'] - io_meta['IO_Start_Date']).dt.days + 1
+    io_meta['Days_Passed'] = (target_date - io_meta['IO_Start_Date']).dt.days + 1
     
-    # Cap Days to avoid errors
-    df['Days_Elapsed'] = df['Days_Elapsed'].clip(lower=1, upper=df['Total_Days'])
-    
-    # Calculate Linear Expected Progress
-    linear_target = (df['Total_Impression_Goal'] / df['Total_Days']) * df['Days_Elapsed']
+    # Clip days passed
+    io_meta['Days_Passed'] = io_meta['Days_Passed'].clip(lower=0)
+    io_meta['Days_Passed'] = io_meta[['Days_Passed', 'Total_Flight_Days']].min(axis=1)
 
-    # Apply Pacing Logic (Even vs ASAP)
-    # ASAP usually expects full delivery immediately, but for lag checks, 
-    # we often compare against the full goal or a front-loaded curve.
-    # Here we use: Even = Linear, ASAP = Full Goal immediately (strict check)
-    
-    conditions = [
-        df['IO_Pacing_Rate'].str.lower() == 'even',
-        df['IO_Pacing_Rate'].str.lower() == 'asap'
-    ]
-    
-    choices = [
-        linear_target,
-        df['Total_Impression_Goal'] # Strict ASAP expectation
-        #(linear_target * 2.0).clip(upper=df['Total_Impression_Goal']) # Lenient ASAP expectation
-    ]
-    
-    df['Expected_Impressions_FD'] = np.select(conditions, choices, default=linear_target)
+    # 5. Calculate Ideal FTD Impressions
+    io_meta['Ideal_FTD_Impressions'] = (io_meta['Derived_Impression_Goal'] / io_meta['Total_Flight_Days']) * io_meta['Days_Passed']
 
-    # 5. Calculate Lag %
-    # Formula: (Actual - Expected) / Expected
-    safe_expected = df['Expected_Impressions_FD'].replace(0, np.nan)
-    df['Impression_Lag_%'] = ((df['Cumulative_Impressions'] - safe_expected) / safe_expected) * 100
-    df['Impression_Lag_%'] = df['Impression_Lag_%'].fillna(0)
+    # 6. Get Actual FTD Impressions (Sum from history)
+    actual_imps = history_df.groupby('Insertion_Order_Name')['Impressions'].sum().reset_index()
+    actual_imps.rename(columns={'Impressions': 'Actual_FTD_Impressions'}, inplace=True)
 
-    # 6. Determine Status
-    # Threshold: If Actual is >5% below Expected, it's LAGGING.
-    # (Using -5% allows for a small margin of error/reporting delay)
-    lag_threshold = -5.0 
-    
-    df['PG_Status'] = np.where(df['Impression_Lag_%'] < lag_threshold, 'LAGGING', 'OK')
-    
-    # Optional: Add specific lag amount to status for clarity
-    df['Status'] = np.where(
-        df['PG_Status'] == 'LAGGING',
-        "LAGGING (" + df['Impression_Lag_%'].round(1).astype(str) + "%)",
-        "OK"
+    # 7. Merge & Calculate Lag
+    result = pd.merge(io_meta, actual_imps, on='Insertion_Order_Name', how='left')
+    result['Actual_FTD_Impressions'] = result['Actual_FTD_Impressions'].fillna(0)
+
+    # Lag % = (Actual - Ideal) / Ideal
+    result['Impression_Lag_%'] = np.where(
+        result['Ideal_FTD_Impressions'] > 0,
+        ((result['Actual_FTD_Impressions'] - result['Ideal_FTD_Impressions']) / result['Ideal_FTD_Impressions']) * 100,
+        0.0
     )
 
-    return df
+    # 8. Generate Alert
+    result['Alert_Status'] = np.where(
+        result['Impression_Lag_%'] < lag_threshold,
+        "PG Lag Alert: Under-pacing",
+        "Stable"
+    )
 
-# --- Test with your data ---
-# df = pd.read_csv('Data.csv')
-# results = calculate_pg_impression_lag(df)
+    # Formatting
+    cols = [ 'Derived_Impression_Goal', 'Ideal_FTD_Impressions', 'Actual_FTD_Impressions', 'Impression_Lag_%', 'Alert_Status']
+    result[cols[1:5]] = result[cols[1:5]].round(1)
+    
+    return result[cols]
 
-# # Show Results
-# cols = ['Date', 'Total_Impression_Goal', 'Cumulative_Impressions', 'Expected_Impressions_FD', 'Impression_Lag_%', 'PG_Status_Detail']
-# print(results[cols].round(0).to_string())
+
+# --- 2. LI Level PG Lag Check ---
+def calculate_li_pg_lag(df, target_date_str, lag_threshold=-20.0):
+    """
+    Calculates Impression Lag for LI Level.
+    Uses IO Planned Budget as the base for the goal (assuming LI contributes to IO).
+    """
+    df = df.copy()
+    
+    # 1. Date Parsing & Filtering
+    target_date = pd.to_datetime(target_date_str)
+    df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+    history_df = df[df['Date'] <= target_date].copy()
+    
+    if history_df.empty:
+        return pd.DataFrame()
+
+    # 2. Get Meta Data (Group by Line Item)
+    # Note: We use IO_Planned_Budget / Goal to get the goal
+    li_meta = history_df.sort_values('Date').groupby('Line_Item_Name').tail(1)
+    li_meta = li_meta[[
+        'Line_Item_Name', 'IO_Planned_Budget', 'Insertion_Order_Goal_Value',
+        'Line_Item_Start_Date', 'Line_Item_End_Date'
+    ]].copy()
+
+    # Clean numeric/date columns
+    li_meta['IO_Planned_Budget'] = pd.to_numeric(li_meta['IO_Planned_Budget'], errors='coerce').fillna(0)
+    li_meta['Insertion_Order_Goal_Value'] = pd.to_numeric(li_meta['Insertion_Order_Goal_Value'], errors='coerce').fillna(1)
+    li_meta['Line_Item_Start_Date'] = pd.to_datetime(li_meta['Line_Item_Start_Date'])
+    li_meta['Line_Item_End_Date'] = pd.to_datetime(li_meta['Line_Item_End_Date'])
+
+    # 3. Derive Goal & Flight Info
+    # WARNING: This assumes the LI is the only item running against this budget.
+    # If multiple LIs share an IO, this 'Ideal' will be very high for a single LI.
+    li_meta['Derived_Impression_Goal'] = (li_meta['IO_Planned_Budget'] / li_meta['Insertion_Order_Goal_Value']) * 1000
+    
+    li_meta['Total_LI_Days'] = (li_meta['Line_Item_End_Date'] - li_meta['Line_Item_Start_Date']).dt.days + 1
+    li_meta['Days_Passed'] = (target_date - li_meta['Line_Item_Start_Date']).dt.days + 1
+    li_meta['Days_Passed'] = li_meta['Days_Passed'].clip(lower=0)
+    li_meta['Days_Passed'] = li_meta[['Days_Passed', 'Total_LI_Days']].min(axis=1)
+
+    li_meta['Ideal_FTD_Impressions'] = (li_meta['Derived_Impression_Goal'] / li_meta['Total_LI_Days']) * li_meta['Days_Passed']
+
+    # 4. Get Actual Stats
+    actual_imps = history_df.groupby('Line_Item_Name')['Impressions'].sum().reset_index()
+    actual_imps.rename(columns={'Impressions': 'Actual_FTD_Impressions'}, inplace=True)
+
+    # 5. Merge & Calculate
+    result = pd.merge(li_meta, actual_imps, on='Line_Item_Name', how='left')
+    result['Actual_FTD_Impressions'] = result['Actual_FTD_Impressions'].fillna(0)
+
+    result['Impression_Lag_%'] = np.where(
+        result['Ideal_FTD_Impressions'] > 0,
+        ((result['Actual_FTD_Impressions'] - result['Ideal_FTD_Impressions']) / result['Ideal_FTD_Impressions']) * 100,
+        0.0
+    )
+
+    # 6. Alert
+    result['Alert_Status'] = np.where(
+        result['Impression_Lag_%'] < lag_threshold,
+        "PG Lag Alert: Under-pacing",
+        "Stable"
+    )
+
+    cols = [ 'Derived_Impression_Goal', 'Ideal_FTD_Impressions', 'Actual_FTD_Impressions', 'Impression_Lag_%', 'Alert_Status']
+    result[cols[1:5]] = result[cols[1:5]].round(1)
+    
+    return result[cols]
+
+# --- Execution ---
+
+# Load Data
+io_df = pd.read_csv('Data.csv')
+li_df = pd.read_csv('LI_Data.csv')
+
+target_date = '4/1/2025'
+
+print(f"\n--- IO Level PG Lag Check for {target_date} ---")
+io_check = calculate_io_pg_lag(io_df, target_date)
+# Using to_string() to ensure all columns are visible
+print(io_check.to_string())
+
+print(f"\n--- LI Level PG Lag Check for {target_date} ---")
+li_check = calculate_li_pg_lag(li_df, target_date)
+print(li_check.to_string())

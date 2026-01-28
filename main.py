@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from email_body import generate_email_body
 from pacing import calculate_io_metrics, calculate_li_metrics
 from impression import get_daily_impression_deviation
-from kpi_alert import calculate_kpi_metrics
+from kpi_alert import analyze_cpm_performance
 from goal_alert import calculate_li_daily_metrics
 
 load_dotenv()       
@@ -66,10 +66,6 @@ def send_alert():
 # print(filter_above_threshold(io_df_processed, 'Deviation %', 20)[["Today's Impressions", "Yesterday's Impressions", "Deviation %"]])
 # #print('--- LI Results (4/2/2025) ---')
 # print(filter_above_threshold(li_df_processed, 'Deviation %', 20)[["Today's Impressions", "Yesterday's Impressions", "Deviation %"]])
-
-# io_df_processed = calculate_kpi_metrics(pd.read_csv('Data.csv'), target_date_str='4/2/2025')
-# print(filter_above_threshold(io_df_processed, 'DoD Deviation %', 20)[['Date', "Today's KPI", "Yesterday's KPI", 'DoD Deviation %']])
-# print(filter_above_threshold(io_df_processed, 'WoW Deviation %', 20)[['Date', "Today's KPI", "Last Week KPI", 'WoW Deviation %']])
 
 # li_df_processed = calculate_li_daily_metrics(pd.read_csv('Placement_Data.csv'), target_date_str='4/2/2025')
 # print(filter_above_threshold(li_df_processed, 'CPM_Deviation%', 15)[['LI_CPM_Goal', 'Achieved_CPM', 'CPM_Deviation%']])
