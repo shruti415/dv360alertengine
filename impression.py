@@ -42,12 +42,12 @@ def check_daily_impression_deviation(df: pd.DataFrame, target_date: str):
     # 6. Calculate % Deviation
     #    Formula: |(Actual - Goal) / Goal| * 100
     daily_data['Deviation_Pct'] = (
-        abs(daily_data['Impressions'] - daily_data['Daily_Impression_Goal']) 
+        (daily_data['Impressions'] - daily_data['Daily_Impression_Goal']) 
         / daily_data['Daily_Impression_Goal']
     ) * 100
     
     # 7. Set Status ('Alert' if > 20%, else 'OK')
-    daily_data['Status'] = np.where(daily_data['Deviation_Pct'] > 20, 'Alert', 'OK')
+    daily_data['Status'] = np.where(daily_data['Deviation_Pct'] < -20, 'Alert', 'OK')
     
     # Optional: Formatting for readability (rounding)
     daily_data['Daily_Impression_Goal'] = daily_data['Daily_Impression_Goal'].round(0)
@@ -55,13 +55,13 @@ def check_daily_impression_deviation(df: pd.DataFrame, target_date: str):
 
     return daily_data
 
-# --- Example Usage ---
+# # --- Example Usage ---
 
-df = pd.read_csv('Impression_Data.csv')
+# df = pd.read_csv('Impression_Data.csv')
 
-# 2. Running the function for a specific date
-result_df = check_daily_impression_deviation(df, '12/18/2025')
+# # 2. Running the function for a specific date
+# result_df = check_daily_impression_deviation(df, '12/18/2025')
 
-# 3. Displaying relevant columns
-cols_to_show = ['Date', 'Impressions', 'Daily_Impression_Goal', 'Deviation_Pct', 'Status']
-print(result_df[cols_to_show].to_string(index=False))
+# # 3. Displaying relevant columns
+# cols_to_show = ['Date', 'Impressions', 'Daily_Impression_Goal', 'Deviation_Pct', 'Status']
+# print(result_df[cols_to_show].to_string(index=False))
